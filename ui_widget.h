@@ -13,6 +13,7 @@
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QListWidget>
 #include <QtWidgets/QPushButton>
+#include <QtWidgets/QTextEdit>
 #include <QtWidgets/QVBoxLayout>
 #include <QtWidgets/QWidget>
 
@@ -22,6 +23,7 @@ class Ui_Widget
 {
 public:
     QVBoxLayout *verticalLayout;
+    QTextEdit *textEdit;
     QListWidget *listWidget;
     QPushButton *pushButton;
 
@@ -32,6 +34,11 @@ public:
         Widget->resize(800, 600);
         verticalLayout = new QVBoxLayout(Widget);
         verticalLayout->setObjectName("verticalLayout");
+        textEdit = new QTextEdit(Widget);
+        textEdit->setObjectName("textEdit");
+
+        verticalLayout->addWidget(textEdit);
+
         listWidget = new QListWidget(Widget);
         listWidget->setObjectName("listWidget");
 

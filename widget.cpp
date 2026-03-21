@@ -31,6 +31,18 @@ Widget::Widget(QWidget *parent)
 
                 controller->selectFirmware(text);
             });
+
+    connect(controller, &SamFirmController::sigLogUpdated,
+            this, [=](const QString &log){
+
+                ui->textEdit->setPlainText(log);
+
+                // 👉 自动滚动到底部
+                QTextCursor cursor = ui->textEdit->textCursor();
+                cursor.movePosition(QTextCursor::End);
+                ui->textEdit->setTextCursor(cursor);
+
+            });
 }
 
 Widget::~Widget()

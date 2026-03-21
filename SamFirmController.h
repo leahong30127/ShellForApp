@@ -5,13 +5,15 @@
 #include <QProcess>
 #include <windows.h>
 #include <UIAutomation.h>
+#include <QTimer>
+#include <atomic>
 
 class SamFirmController : public QObject
 {
     Q_OBJECT
 public:
     explicit SamFirmController(QObject *parent = nullptr);
-
+~SamFirmController();
     void startSamFirm(const QString &exePath);
     void autoStart(const QString &model, const QString &region);
     void fillModelRegion(const QString &model, const QString &region);
@@ -27,6 +29,7 @@ public:
                            const QString &model,
                            const QString &region);
     QString getLogText(IUIAutomationElement *root);//日志读取函数
+    QString readLogByWin32(HWND hwnd);
 signals:
     void sigFirmwareListReady(const QStringList &list);
     void sigLogUpdated(const QString &log);
@@ -40,6 +43,25 @@ private:
 
     void setEditText(IUIAutomationElement *root, int index, const QString &text);
     void clickButton(IUIAutomationElement *root, const QString &name);
+
+
+    QTimer *m_logTimer = nullptr;
+    QString m_lastLogText;
+    bool m_logMonitoringStarted = false;
+    QString m_lastLogTail;
+
+    HWND m_logWnd = nullptr;   // 👉 缓存日志窗口句柄
+    HWND findLogWindow(HWND mainWnd);
+    HWINEVENTHOOK m_hook = NULL;
+    static void CALLBACK WinEventProc(
+        HWINEVENTHOOK hWinEventHook,
+        DWORD event,
+        HWND hwnd,
+        LONG idObject,
+        LONG idChild,
+        DWORD dwEventThread,
+        DWORD dwmsEventTime
+        );
 };
 
 #endif

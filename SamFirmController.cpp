@@ -3,47 +3,216 @@
 #include <QDebug>
 #include <Windows.h>
 #include <UIAutomation.h>   // ⭐ 必须
+#include <QtConcurrent>
 #include <comutil.h>
-SamFirmController::SamFirmController(QObject *parent)
-    : QObject(parent)
-{
-    m_proc = new QProcess(this);
 
+static BOOL CALLBACK EnumChildProc(HWND hwnd, LPARAM lParam)
+{
+    std::vector<HWND>* list = (std::vector<HWND>*)lParam;
+    list->push_back(hwnd);
+    return TRUE;
+}
+
+// 👉 找日志窗口
+HWND SamFirmController::findLogWindow(HWND mainWnd)
+{
+    std::vector<HWND> children;
+    EnumChildWindows(mainWnd, EnumChildProc, (LPARAM)&children);
+
+    HWND best = NULL;
+    int maxArea = 0;
+
+    for (HWND h : children)
+    {
+        wchar_t className[256] = {0};
+        GetClassName(h, className, 256);
+
+        QString cls = QString::fromWCharArray(className);
+
+        // 👉 只要 WindowsForms 的 Edit
+        if (!cls.contains("WindowsForms10.Edit", Qt::CaseInsensitive))
+            continue;
+
+        RECT rc;
+        GetWindowRect(h, &rc);
+
+        int w = rc.right - rc.left;
+        int hgt = rc.bottom - rc.top;
+        int area = w * hgt;
+
+        // 👉 排除小输入框（关键）
+        if (area < 20000)   // Model/Region 很小
+            continue;
+
+        if (area > maxArea)
+        {
+            maxArea = area;
+            best = h;
+        }
+    }
+
+    if (best)
+    {
+        qDebug() << "✔ 选中日志窗口:" << best;
+    }
+    else
+    {
+        qDebug() << "❌ 未找到日志窗口";
+    }
+
+    return best;
+}
+// 👉 读取文本
+QString SamFirmController::readLogByWin32(HWND hwnd)
+{
+    if (!hwnd) return "";
+
+    int len = SendMessage(hwnd, WM_GETTEXTLENGTH, 0, 0);
+    if (len <= 0) return "";
+
+    std::wstring buffer(len + 1, L'\0');
+
+    SendMessage(hwnd, WM_GETTEXT,
+                (WPARAM)(len + 1),
+                (LPARAM)buffer.data());
+
+    return QString::fromWCharArray(buffer.c_str());
+}
+
+SamFirmController::SamFirmController(QObject *parent)
+    : QObject(parent),
+    m_proc(new QProcess(this)),
+    automation(nullptr),
+    m_logTimer(new QTimer(this))
+{
     CoInitialize(NULL);
     CoCreateInstance(CLSID_CUIAutomation, NULL,
                      CLSCTX_INPROC_SERVER,
                      IID_IUIAutomation,
                      (void**)&automation);
+
+    m_logTimer->setInterval(500);
+
+    connect(m_logTimer, &QTimer::timeout, this, [this]() {
+
+        HWND hwnd = findWindow();
+        if (!hwnd)
+            return;
+
+        // 👉 第一次找日志窗口
+        if (!m_logWnd)
+        {
+            m_logWnd = findLogWindow(hwnd);
+
+            if (!m_logWnd)
+            {
+                qDebug() << "未找到日志窗口";
+                return;
+            }
+
+            qDebug() << "日志窗口已锁定:" << m_logWnd;
+        }
+
+        QString text = readLogByWin32(m_logWnd);
+
+        if (text.isEmpty())
+            return;
+
+        // 👉 只要有变化就更新
+        if (text != m_lastLogText)
+        {
+            m_lastLogText = text;
+            emit sigLogUpdated(text);
+        }
+    });
+}
+
+SamFirmController::~SamFirmController()
+{
+    if (m_logTimer && m_logTimer->isActive())
+        m_logTimer->stop();
+
+    if (automation)
+    {
+        automation->Release();
+        automation = nullptr;
+    }
+
+    CoUninitialize();
 }
 
 // 启动 SamFirm
 void SamFirmController::startSamFirm(const QString &exePath)
 {
+
+    m_lastLogText.clear();
+    m_logWnd = nullptr;   // 🔥 必须加
+
 #ifdef Q_OS_WIN
+    if (m_proc->state() != QProcess::NotRunning)
+    {
+        m_proc->kill();
+        m_proc->waitForFinished(3000);
+    }
+
     m_proc->setProgram(exePath);
 
-    m_proc->setCreateProcessArgumentsModifier(
-        [](QProcess::CreateProcessArguments *args){
-            args->flags |= CREATE_NO_WINDOW;
-        }
-        );
+    // 调试阶段不要隐藏窗口，也不要 CREATE_NO_WINDOW
+    // m_proc->setCreateProcessArgumentsModifier(
+    //     [](QProcess::CreateProcessArguments *args){
+    //         args->flags |= CREATE_NO_WINDOW;
+    //     }
+    // );
 #endif
 
     m_proc->start();
+
+    if (!m_proc->waitForStarted(3000))
+    {
+        qDebug() << "SamFirm 启动失败";
+        return;
+    }
+
+    qDebug() << "SamFirm 已启动";
+
+    m_lastLogText.clear();
+
+    if (m_logTimer && !m_logTimer->isActive())
+        m_logTimer->start();
+    // 🔥 关键：启动后立即后台隐藏窗口
+    // QtConcurrent::run([=](){
+
+    //     for (int i = 0; i < 50; i++)  // 最多等10秒
+    //     {
+    //         HWND hwnd = FindWindow(NULL, L"SamFirm");
+
+    //         if (hwnd)
+    //         {
+    //             hideWindow(hwnd);
+    //             qDebug() << "窗口已在启动瞬间隐藏";
+    //             return;
+    //         }
+
+    //         Sleep(200);
+    //     }
+
+    //     qDebug() << "未捕获到 SamFirm 窗口";
+    // });
 }
 
 // 查找窗口
 HWND SamFirmController::findWindow()
 {
-    for (int i = 0; i < 10; i++)
-    {
-        HWND hwnd = FindWindow(NULL, L"SamFirm");
-        if (hwnd)
-            return hwnd;
+    // for (int i = 0; i < 10; i++)
+    // {
+    //     HWND hwnd = FindWindow(NULL, L"SamFirm");
+    //     if (hwnd)
+    //         return hwnd;
 
-        QThread::sleep(1);
-    }
-    return NULL;
+    //     QThread::sleep(1);
+    // }
+    // return NULL;
+    return FindWindow(NULL, L"SamFirm");
 }
 
 // 隐藏窗口
@@ -54,13 +223,32 @@ void SamFirmController::hideWindow(HWND hwnd)
 
     if (!hwnd) return;
 
-    // 👉 移到屏幕外（推荐）
-    SetWindowPos(hwnd, NULL,
-                 -2000, -2000,   // 关键：移出屏幕
-                 800, 600,
-                 SWP_NOZORDER | SWP_SHOWWINDOW);
+    // // 👉 移到屏幕外（推荐）
+    // SetWindowPos(hwnd, NULL,
+    //              -2000, -2000,   // 关键：移出屏幕
+    //              800, 600,
+    //              SWP_NOZORDER | SWP_SHOWWINDOW);
 
-    qDebug() << "SamFirm 已移出屏幕";
+    // qDebug() << "SamFirm 已移出屏幕";
+
+    // 1️⃣ 获取当前扩展样式
+    LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+
+    // 2️⃣ 移除任务栏属性
+    exStyle &= ~WS_EX_APPWINDOW;
+
+    // 3️⃣ 添加工具窗口属性（不会出现在任务栏）
+    exStyle |= WS_EX_TOOLWINDOW;
+
+    SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+
+    // 4️⃣ 应用样式变化（关键）
+    SetWindowPos(hwnd, NULL,
+                 -2000, -2000,
+                 800, 600,
+                 SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+
+    qDebug() << "SamFirm 已隐藏 + 从任务栏移除";
 }
 
 // 获取 UIA 根节点
@@ -139,7 +327,9 @@ void SamFirmController::autoStart(const QString &model, const QString &region)
     if (!root)
         return;
 
-      hideWindow(hwnd);   // 👈 放这里
+   //   hideWindow(hwnd);   // 👈 放这里
+
+
 
     // 填输入框（第0=型号，第1=地区）
     setEditText(root, 0, model);
@@ -158,9 +348,6 @@ void SamFirmController::fillModelRegion(const QString &model, const QString &reg
         return;
     }
 
-    // ❗第一阶段：不要隐藏窗口
-    hideWindow(hwnd);
-
     IUIAutomationElement *root = getRootElement(hwnd);
     if (!root)
     {
@@ -170,15 +357,20 @@ void SamFirmController::fillModelRegion(const QString &model, const QString &reg
 
     qDebug() << "开始填写 Model 和 Region";
 
+    // 启动日志轮询
+    if (m_logTimer && !m_logTimer->isActive())
+        m_logTimer->start();
+
     // 第0个输入框：Model
     setEditText(root, 0, model);
-
-    QThread::msleep(300); // 稍微等一下
+    QThread::msleep(300);
 
     // 第1个输入框：Region
     setEditText(root, 1, region);
 
     qDebug() << "填写完成";
+
+    root->Release();
 }
 
 void SamFirmController::clickStart(IUIAutomationElement *root)
@@ -370,50 +562,123 @@ void SamFirmController::startAutoDownload(const QString &exePath, const QString 
 
 QString SamFirmController::getLogText(IUIAutomationElement *root)
 {
-    QString result;
+    return "";
+    QString bestText;
+    QString bestLogLikeText;
 
-    VARIANT var;
-    VariantInit(&var);
-    var.vt = VT_I4;
-    var.lVal = UIA_EditControlTypeId;
+    if (!root || !automation)
+        return bestText;
 
     IUIAutomationCondition *cond = nullptr;
-    automation->CreatePropertyCondition(
-        UIA_ControlTypePropertyId,
-        var,
-        &cond
-        );
+    automation->CreateTrueCondition(&cond);
 
     IUIAutomationElementArray *arr = nullptr;
     root->FindAll(TreeScope_SubTree, cond, &arr);
 
-    if (!arr) return result;
+    if (cond) cond->Release();
+    if (!arr) return bestText;
 
     int count = 0;
     arr->get_Length(&count);
 
-    // 👉 一般最后一个 Edit 是日志框
-    for (int i = count - 1; i >= 0; i--)
+    for (int i = 0; i < count; ++i)
     {
         IUIAutomationElement *elem = nullptr;
-        arr->GetElement(i, &elem);
+        if (FAILED(arr->GetElement(i, &elem)) || !elem)
+            continue;
 
-        if (!elem) continue;
+        CONTROLTYPEID typeId = 0;
+        elem->get_CurrentControlType(&typeId);
 
-        IValueProvider *value = nullptr;
-        elem->GetCurrentPattern(UIA_ValuePatternId, (IUnknown**)&value);
-
-        if (value)
+        if (typeId == UIA_EditControlTypeId ||
+            typeId == UIA_DocumentControlTypeId ||
+            typeId == UIA_TextControlTypeId)
         {
-            BSTR bstr;
-            value->get_CurrentValue(&bstr);
+            QString text;
 
-            result = QString::fromWCharArray(bstr);
-            SysFreeString(bstr);
+            // 1) ValuePattern
+            IValueProvider *value = nullptr;
+            if (SUCCEEDED(elem->GetCurrentPattern(UIA_ValuePatternId, (IUnknown**)&value)) && value)
+            {
+                BSTR bstr = nullptr;
+                if (SUCCEEDED(value->get_Value(&bstr)) && bstr)
+                {
+                    text = QString::fromWCharArray(bstr);
+                    SysFreeString(bstr);
+                }
+                value->Release();
+            }
 
-            break;
+            // 2) TextPattern
+            if (text.trimmed().isEmpty())
+            {
+                IUIAutomationTextPattern *textPattern = nullptr;
+                if (SUCCEEDED(elem->GetCurrentPatternAs(UIA_TextPatternId,
+                                                        IID_IUIAutomationTextPattern,
+                                                        (void**)&textPattern)) && textPattern)
+                {
+                    IUIAutomationTextRange *range = nullptr;
+                    if (SUCCEEDED(textPattern->get_DocumentRange(&range)) && range)
+                    {
+                        BSTR bstr = nullptr;
+                        // 先试完整读取
+                        if (SUCCEEDED(range->GetText(-1, &bstr)) && bstr)
+                        {
+                            text = QString::fromWCharArray(bstr);
+                            SysFreeString(bstr);
+                        }
+                        range->Release();
+                    }
+                    textPattern->Release();
+                }
+            }
+
+            // 3) LegacyIAccessible
+            if (text.trimmed().isEmpty())
+            {
+                IUIAutomationLegacyIAccessiblePattern *legacy = nullptr;
+                if (SUCCEEDED(elem->GetCurrentPatternAs(UIA_LegacyIAccessiblePatternId,
+                                                        IID_IUIAutomationLegacyIAccessiblePattern,
+                                                        (void**)&legacy)) && legacy)
+                {
+                    BSTR bstr = nullptr;
+                    if (SUCCEEDED(legacy->get_CurrentValue(&bstr)) && bstr)
+                    {
+                        text = QString::fromWCharArray(bstr);
+                        SysFreeString(bstr);
+                    }
+                    legacy->Release();
+                }
+            }
+
+            QString lower = text.toLower();
+
+            bool looksLikeLog =
+                lower.contains("checking") ||
+                lower.contains("version") ||
+                lower.contains("download") ||
+                lower.contains("decrypt") ||
+                lower.contains("error") ||
+                lower.contains("crc") ||
+                lower.contains("model") ||
+                lower.contains("region") ||
+                lower.contains("binary") ||
+                lower.contains("size");
+
+            if (looksLikeLog && text.length() > bestLogLikeText.length())
+                bestLogLikeText = text;
+
+            if (text.length() > bestText.length())
+                bestText = text;
         }
+
+        elem->Release();
     }
 
-    return result;
+    arr->Release();
+
+    if (!bestLogLikeText.isEmpty())
+        return bestLogLikeText;
+
+    return bestText;
 }
