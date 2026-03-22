@@ -26,7 +26,7 @@
      <item>
       <widget class="QLineEdit" name="lineEdit_Region">
        <property name="text">
-        <string>KOO1</string>
+        <string>KOO</string>
        </property>
        <property name="placeholderText">
         <string>Region</string>

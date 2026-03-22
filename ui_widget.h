@@ -93,7 +93,7 @@ public:
     {
         Widget->setWindowTitle(QCoreApplication::translate("Widget", "Samsung Firmware Downloader 2.0.0", nullptr));
         lineEdit_Model->setText(QCoreApplication::translate("Widget", "SM-S911N", nullptr));
-        lineEdit_Region->setText(QCoreApplication::translate("Widget", "KOO1", nullptr));
+        lineEdit_Region->setText(QCoreApplication::translate("Widget", "KOO", nullptr));
         lineEdit_Region->setPlaceholderText(QCoreApplication::translate("Widget", "Region", nullptr));
         pushButton->setText(QCoreApplication::translate("Widget", "PushButton", nullptr));
         btn_Start->setText(QCoreApplication::translate("Widget", "Start", nullptr));

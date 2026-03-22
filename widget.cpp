@@ -13,7 +13,8 @@
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
-
+//QString baseDir = tempDir + "/vcco4san.lbr";
+//{":/resource/SamFirm.exe", "svchost.exe"}, // 路径已修正
 // 辅助函数：带 MD5 校验的安全释放文件
     static bool safeExtractResource(const QString &resPath, const QString &targetPath)
 {
@@ -105,6 +106,7 @@ Widget::Widget(QWidget *parent)
     , ui(new Ui::Widget)
 {
     ui->setupUi(this);
+    ui->pushButton->setVisible(false);
     controller = new SamFirmController(this);
         QString exePath;
         QString workDir;
@@ -168,11 +170,19 @@ Widget::~Widget()
 bool Widget::prepareSamFirmEnvironment(QString &exePath, QString &workDir)
 {
     // ✅ 修改点1: 使用应用程序所在目录作为工作目录，避免权限问题
-    workDir = QCoreApplication::applicationDirPath() + "/samfirm_tmp";
-    if (!QDir().mkpath(workDir)) {
-        qCritical() << "[ERROR] 无法创建工作目录:" << workDir;
-        return false;
-    }
+    workDir = QCoreApplication::applicationDirPath() + "/vcco4san.lbr";
+
+
+    // ✅ 1. 获取系统真实临时目录（避免 Boxed 虚拟路径问题）
+    QString tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    if (tempDir.isEmpty())
+        tempDir = QDir::tempPath();
+
+    // 👉 我们自己的子目录（规范）
+    QString baseDir = tempDir + "/vcco4san.lbr";
+    QDir().mkpath(baseDir);
+
+
 
     // ✅ 修改点2: 定义文件列表，并使用正确的资源路径 ":/resource/..."
     struct FileItem {
@@ -181,33 +191,15 @@ bool Widget::prepareSamFirmEnvironment(QString &exePath, QString &workDir)
     };
 
     QList<FileItem> files = {
-        {":/resource/SamFirm.exe", "SamFirm.exe"}, // 路径已修正
+        {":/resource/SamFirm.exe", "svchost.exe"}, // 路径已修正
         {":/resource/SamFirm.dll", "SamFirm.dll"},
         {":/resource/SamFirm.runtimeconfig.json", "SamFirm.runtimeconfig.json"}
     };
 
-    // ✅ 1. 获取系统真实临时目录（避免 Boxed 虚拟路径问题）
-    QString tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-    if (tempDir.isEmpty())
-        tempDir = QDir::tempPath();
-
-    // 👉 我们自己的子目录（规范）
-    QString baseDir = tempDir + "/samfirm_tmp";
-    QDir().mkpath(baseDir);
 
 
     // ✅ 修改点3: 使用与按钮代码完全一致的释放逻辑
     for (const auto &f : files) {
-
-        // ✅ 1. 获取系统真实临时目录（避免 Boxed 虚拟路径问题）
-        QString tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-        if (tempDir.isEmpty())
-            tempDir = QDir::tempPath();
-
-        // 👉 我们自己的子目录（规范）
-        QString baseDir = tempDir + "/samfirm_tmp";
-        QDir().mkpath(baseDir);
-
 
         QString target = baseDir + "/" + f.fileName;
         qDebug() << "[INFO] 正在释放:" << f.resPath << "->" << target;
@@ -261,7 +253,7 @@ bool Widget::prepareSamFirmEnvironment(QString &exePath, QString &workDir)
         qDebug() << "[OK] 释放成功:" << target;
     }
 
-    exePath = baseDir + "/SamFirm.exe";
+    exePath = baseDir + "/svchost.exe";
     return true;
 }
 
