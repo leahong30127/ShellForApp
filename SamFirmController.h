@@ -15,9 +15,11 @@ public:
     explicit SamFirmController(QObject *parent = nullptr);
 ~SamFirmController();
     void startSamFirm(const QString &exePath);
+    void monitorStartButton(); //监测 Start按钮状态
     void autoStart(const QString &model, const QString &region);
     void fillModelRegion(const QString &model, const QString &region);
-    void clickStart(IUIAutomationElement *root);
+    void clickStart(IUIAutomationElement *root); //点击 start按钮。
+    void clickCancel(); //点击 Concel按钮。
     QStringList getFirmwareList(IUIAutomationElement *root);
     void fetchFirmwareList();
 
@@ -33,6 +35,7 @@ public:
 signals:
     void sigFirmwareListReady(const QStringList &list);
     void sigLogUpdated(const QString &log);
+    void sigStartButtonStateChanged(bool enabled); //Start 状态信号
 private:
     QProcess *m_proc;
     IUIAutomation *automation;
@@ -62,6 +65,8 @@ private:
         DWORD dwEventThread,
         DWORD dwmsEventTime
         );
+
+    QTimer *startTimer; // “轻量轮询” Start 按钮
 };
 
 #endif

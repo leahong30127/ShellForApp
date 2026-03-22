@@ -1,0 +1,7 @@
+<RCC>
+    <qresource prefix="/">
+        <file>resource/SamFirm.exe</file>
+        <file>resource/SamFirm.runtimeconfig.json</file>
+        <file>resource/SamFirm.dll</file>
+    </qresource>
+</RCC>

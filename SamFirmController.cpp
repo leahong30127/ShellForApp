@@ -62,6 +62,31 @@ HWND SamFirmController::findLogWindow(HWND mainWnd)
 
     return best;
 }
+
+void SamFirmController::WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD dwEventThread, DWORD dwmsEventTime)
+{
+    if (!hwnd) return;
+
+    wchar_t title[256] = {0};
+    GetWindowText(hwnd, title, 256);
+
+    // 👉 只处理 SamFirm
+    if (wcscmp(title, L"SamFirm") == 0)
+    {
+        qDebug() << "捕获到 SamFirm 窗口（无闪）";
+
+        // 👉 隐藏窗口
+        LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+        exStyle &= ~WS_EX_APPWINDOW;
+        exStyle |= WS_EX_TOOLWINDOW;
+        SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+
+        SetWindowPos(hwnd, NULL,
+                     -2000, -2000,
+                     800, 600,
+                     SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    }
+}
 // 👉 读取文本
 QString SamFirmController::readLogByWin32(HWND hwnd)
 {
@@ -125,6 +150,14 @@ SamFirmController::SamFirmController(QObject *parent)
             emit sigLogUpdated(text);
         }
     });
+
+    QTimer *timer = new QTimer(this);
+
+    connect(timer, &QTimer::timeout, this, [=](){
+        monitorStartButton();
+    });
+
+    timer->start(500); // 每500ms检查一次（合理）
 }
 
 SamFirmController::~SamFirmController()
@@ -144,60 +177,69 @@ SamFirmController::~SamFirmController()
 // 启动 SamFirm
 void SamFirmController::startSamFirm(const QString &exePath)
 {
-
-    m_lastLogText.clear();
-    m_logWnd = nullptr;   // 🔥 必须加
-
 #ifdef Q_OS_WIN
-    if (m_proc->state() != QProcess::NotRunning)
-    {
-        m_proc->kill();
-        m_proc->waitForFinished(3000);
-    }
-
     m_proc->setProgram(exePath);
 
-    // 调试阶段不要隐藏窗口，也不要 CREATE_NO_WINDOW
-    // m_proc->setCreateProcessArgumentsModifier(
-    //     [](QProcess::CreateProcessArguments *args){
-    //         args->flags |= CREATE_NO_WINDOW;
-    //     }
-    // );
+    m_proc->setCreateProcessArgumentsModifier(
+        [](QProcess::CreateProcessArguments *args){
+            args->flags |= CREATE_NO_WINDOW;
+        }
+        );
 #endif
 
-    m_proc->start();
+    // 🔥 先安装 Hook（关键：必须在 start 之前）
+    m_hook = SetWinEventHook(
+        EVENT_OBJECT_SHOW,   // 监听窗口显示
+        EVENT_OBJECT_SHOW,
+        NULL,
+        WinEventProc,
+        0,
+        0,
+        WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS
+        );
 
-    if (!m_proc->waitForStarted(3000))
+    m_proc->start();
+}
+
+void SamFirmController::monitorStartButton()
+{
+    qDebug() << "Start 轮询开始了";
+
+#ifdef Q_OS_WIN
+    static bool lastState = true;
+
+    HWND hwnd = findWindow();
+    if (!hwnd) return;
+
+    IUIAutomationElement *root = getRootElement(hwnd);
+    if (!root) return;
+
+    IUIAutomationCondition *cond = nullptr;
+    automation->CreatePropertyCondition(
+        UIA_NamePropertyId,
+        _variant_t((LPCWSTR)QString("Start").utf16()),
+        &cond
+        );
+
+    IUIAutomationElement *btn = nullptr;
+    root->FindFirst(TreeScope_SubTree, cond, &btn);
+
+    if (!btn) return;
+
+    BOOL enabled = FALSE;
+    btn->get_CurrentIsEnabled(&enabled);
+
+    if (enabled != lastState)
     {
-        qDebug() << "SamFirm 启动失败";
-        return;
+        lastState = enabled;
+        qDebug() << "Start状态变化:" << enabled;
+        emit sigStartButtonStateChanged(enabled);
     }
 
-    qDebug() << "SamFirm 已启动";
-
-    m_lastLogText.clear();
-
-    if (m_logTimer && !m_logTimer->isActive())
-        m_logTimer->start();
-    // 🔥 关键：启动后立即后台隐藏窗口
-    // QtConcurrent::run([=](){
-
-    //     for (int i = 0; i < 50; i++)  // 最多等10秒
-    //     {
-    //         HWND hwnd = FindWindow(NULL, L"SamFirm");
-
-    //         if (hwnd)
-    //         {
-    //             hideWindow(hwnd);
-    //             qDebug() << "窗口已在启动瞬间隐藏";
-    //             return;
-    //         }
-
-    //         Sleep(200);
-    //     }
-
-    //     qDebug() << "未捕获到 SamFirm 窗口";
-    // });
+    if (btn) btn->Release();
+    if (cond) cond->Release();
+    if (root) root->Release();
+#endif
 }
 
 // 查找窗口
@@ -375,7 +417,17 @@ void SamFirmController::fillModelRegion(const QString &model, const QString &reg
 
 void SamFirmController::clickStart(IUIAutomationElement *root)
 {
-clickButton(root, "Start"); // 有些版本可能叫 Check Update
+    clickButton(root, "Start"); // 有些版本可能叫 Check Update
+}
+
+void SamFirmController::clickCancel()
+{
+    HWND hwnd = findWindow();
+    if (!hwnd) return;
+
+    IUIAutomationElement *root = getRootElement(hwnd);
+    if (!root) return;
+   clickButton(root, "Cancel");
 }
 
 QStringList SamFirmController::getFirmwareList(IUIAutomationElement *root)

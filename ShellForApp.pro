@@ -25,3 +25,8 @@ LIBS += -lole32 -loleaut32 -luuid
 qnx: target.path = /tmp/$${TARGET}/bin
 else: unix:!android: target.path = /opt/$${TARGET}/bin
 !isEmpty(target.path): INSTALLS += target
+
+RC_FILE +=resource/xx.rc
+
+RESOURCES += \
+    res.qrc

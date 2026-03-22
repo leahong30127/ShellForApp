@@ -3,6 +3,13 @@
 
 #include <QWidget>
 #include "SamFirmController.h"
+#include <QFile>
+#include <QDir>
+#include <QStandardPaths>
+#include <QCryptographicHash>
+#include <QDebug>
+#include <QProcess>
+#include <QFile>
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -18,7 +25,12 @@ public:
     Widget(QWidget *parent = nullptr);
     ~Widget();
 
+    bool prepareSamFirmEnvironment(QString &exePath, QString &workDir);
 private slots:
+    void on_btn_Start_clicked();
+
+    void on_btn_Cancel_clicked();
+
     void on_pushButton_clicked();
 
 private:
