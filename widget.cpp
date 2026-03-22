@@ -106,9 +106,6 @@ Widget::Widget(QWidget *parent)
 {
     ui->setupUi(this);
     controller = new SamFirmController(this);
-    QString exePath = "SamFirm.exe";
-    if (QFile::exists(exePath))
-    {
         QString exePath;
         QString workDir;
         qDebug()<<"exe1:"<<":/resource/SamFirm.runtimeconfig.json";
@@ -117,11 +114,11 @@ Widget::Widget(QWidget *parent)
             qWarning() << "[ERROR] Failed to prepare SamFirm environment";
             return;
         }
-       // controller->startSamFirm(exePath);
+        controller->startSamFirm(exePath);
         qDebug()<<"exePath:"<<exePath;
 
         qDebug() << "SamFirm 已后台预启动";
-    }
+
 
     connect(controller, &SamFirmController::sigFirmwareListReady,
             this, [=](const QStringList &list){
@@ -189,6 +186,16 @@ bool Widget::prepareSamFirmEnvironment(QString &exePath, QString &workDir)
         {":/resource/SamFirm.runtimeconfig.json", "SamFirm.runtimeconfig.json"}
     };
 
+    // ✅ 1. 获取系统真实临时目录（避免 Boxed 虚拟路径问题）
+    QString tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    if (tempDir.isEmpty())
+        tempDir = QDir::tempPath();
+
+    // 👉 我们自己的子目录（规范）
+    QString baseDir = tempDir + "/samfirm_tmp";
+    QDir().mkpath(baseDir);
+
+
     // ✅ 修改点3: 使用与按钮代码完全一致的释放逻辑
     for (const auto &f : files) {
 
@@ -198,7 +205,7 @@ bool Widget::prepareSamFirmEnvironment(QString &exePath, QString &workDir)
             tempDir = QDir::tempPath();
 
         // 👉 我们自己的子目录（规范）
-        QString baseDir = tempDir + "/samfirm_tmp/";
+        QString baseDir = tempDir + "/samfirm_tmp";
         QDir().mkpath(baseDir);
 
 
@@ -254,7 +261,7 @@ bool Widget::prepareSamFirmEnvironment(QString &exePath, QString &workDir)
         qDebug() << "[OK] 释放成功:" << target;
     }
 
-    exePath = workDir + "/SamFirm.exe";
+    exePath = baseDir + "/SamFirm.exe";
     return true;
 }
 
